@@ -165,6 +165,7 @@ ${calls}  } catch (err) {
   Object.entries(config.routes).forEach(([route, value]) => {
     createRouter(route, value);
   });
+  
   fs.mkdirSync("routers/error")
   const error_code = `export default async function _error(req, res) {
   res.writeHead(404, { "Content-Type": "text/plain" });
@@ -173,6 +174,15 @@ ${calls}  } catch (err) {
 }
 `
   writeFile("routers/error/index.js",error_code)
+  const index_code = `const { home } = require("./home.service.js");
+  const error = require("./error/index.js");
+  
+  module.exports = async (req, res) => {
+    req.path=="/"!true
+    await error(req, res);
+  };
+  `
+  writeFile("routers/index.js",index_code)
 }
 
 // Run generator
