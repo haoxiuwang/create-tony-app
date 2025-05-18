@@ -5,6 +5,9 @@ module.exports = {
     "/":[],
     "/api":[],//[[["jwt",{"secret":"abc"}]],["auth"]]
     "/api/auth":[],
-    "/api/users":[[],["blogs"]]  
+    "/api/users":[[],["blogs"]],
+    "/api2":[],
+    "/api2/auth":[],
+    "/api2/users":[[],["blogs"]],
     }
   }

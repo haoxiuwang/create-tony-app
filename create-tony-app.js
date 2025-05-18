@@ -106,7 +106,7 @@ function createRouter(route, value) {
 
   const content = `${serviceImports}${mwImports}${childImports}${errorImport}
 module.exports = async (req, res) => {
-  req.path.startsWith("${routePath}")!
+  req.path.startsWith("${routePath}")!true
 ${mwCalls}${childCalls}  await error(req, res);
 };
 `;
@@ -138,6 +138,7 @@ function createApp(config) {
 
   appRoutes.forEach(route => {
     const segments = route.split("/").filter(Boolean);
+    if(segments.length>1)return
     const alias = segments.length === 0 ? "main" : segments[segments.length - 1];
     const importPath = `./routers/${segments.join("/") || "index"}`;
     imports += `import ${alias} from "${importPath}";\n`;
@@ -164,6 +165,14 @@ ${calls}  } catch (err) {
   Object.entries(config.routes).forEach(([route, value]) => {
     createRouter(route, value);
   });
+  fs.mkdirSync("routers/error")
+  const error_code = `export default async function _error(req, res) {
+  res.writeHead(404, { "Content-Type": "text/plain" });
+  res.end("404 Not Found");
+  return false;
+}
+`
+  writeFile("routers/error/index.js",error_code)
 }
 
 // Run generator
