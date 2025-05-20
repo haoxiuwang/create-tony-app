@@ -21,6 +21,19 @@ function pascal(str) {
     .join("");
 }
 
+function toValidVarName(str) {
+  return str
+    .replace(/[^a-zA-Z0-9]/g, ' ')
+    .split(' ')
+    .map((word, idx) => {
+      if (!word) return "";
+      return idx === 0
+        ? word.charAt(0).toLowerCase() + word.slice(1)
+        : word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join('');
+}
+
 function getModuleName(modPath) {
   return path.basename(modPath).replace(/\.[jt]s$/, "");
 }
@@ -47,12 +60,13 @@ function generateMiddlewareCode(middlewares, level) {
   middlewares.forEach((mwArr, idx) => {
     const [modPath, options] = mwArr;
     const name = getModuleName(modPath);
-    const varName = `__${name}${idx}`;
+    const safeName = toValidVarName(name);
+    const varName = `__${safeName}${idx}`;
     const importPath = isLocal(modPath)
       ? `${"../".repeat(level)}middlewares/${name}.js`
       : modPath;
-    imports += `const ${name} = require("${importPath}");\n`;
-    imports += `const ${varName} = ${name}(${options ? JSON.stringify(options) : ""});\n`;
+    imports += `const ${safeName} = require("${importPath}");\n`;
+    imports += `const ${varName} = ${safeName}(${options ? JSON.stringify(options) : ""});\n`;
     calls += `  await ${varName}(req, res)!;\n`;
   });
 
@@ -62,9 +76,7 @@ function generateMiddlewareCode(middlewares, level) {
 function createRouter(route, value) {
   const segments = route.split("/").filter(Boolean);
   const routerDir = path.join("routers", ...segments);
-  
   const routerFile = path.join(routerDir, "index.js");
-
   const level = segments.length;
   const routePath = "/" + segments.join("/");
 
@@ -73,7 +85,7 @@ function createRouter(route, value) {
 
   if (Array.isArray(value)) {
     if (value.length === 2) {
-      middlewares = value[0]; // array of [moduleName, options?]
+      middlewares = value[0];
       services = value[1];
     }
   }
@@ -96,13 +108,12 @@ function createRouter(route, value) {
   children.forEach(child => {
     const name = path.basename(child);
     const alias = pascal(name);
-    
     const importPath = `./${name}/index.js`;
     childImports += `const ${alias} = require("${importPath}");\n`;
     childCalls += `  await ${alias}(req, res)!;\n`;
   });
-  
-  const errorImport = `const error = require("${"../".repeat(level)}${!level?"./":""}error/index.js");\n`;
+
+  const errorImport = `const error = require("${"../".repeat(level)}${!level ? "./" : ""}error/index.js");\n`;
 
   const content = `${serviceImports}${mwImports}${childImports}${errorImport}
 module.exports = async (req, res) => {
@@ -113,7 +124,6 @@ ${mwCalls}${childCalls}  await error(req, res);
 
   writeFile(routerFile, content);
 
-  // Create default + additional service files
   createServiceFile(path.join(routerDir, `${defaultService}.service.js`), routePath);
   services.forEach(srv => {
     createServiceFile(path.join(routerDir, `${srv}.service.js`), routePath);
@@ -129,16 +139,17 @@ function createApp(config) {
 
   appMiddlewares.forEach(([modPath, options], idx) => {
     const name = getModuleName(modPath);
-    const varName = `_${name}${idx}`;
+    const safeName = toValidVarName(name);
+    const varName = `_${safeName}${idx}`;
     const importPath = isLocal(modPath) ? `./middlewares/${name}.js` : modPath;
-    imports += `import ${name} from "${importPath}";\n`;
-    imports += `const ${varName} = ${name}(${options ? JSON.stringify(options) : ""});\n`;
+    imports += `import ${safeName} from "${importPath}";\n`;
+    imports += `const ${varName} = ${safeName}(${options ? JSON.stringify(options) : ""});\n`;
     calls += `    await ${varName}(req, res)!;\n`;
   });
 
   appRoutes.forEach(route => {
     const segments = route.split("/").filter(Boolean);
-    if(segments.length>1)return
+    if (segments.length > 1) return;
     const alias = segments.length === 0 ? "main" : segments[segments.length - 1];
     const importPath = `./routers/${segments.join("/") || "index"}`;
     imports += `import ${alias} from "${importPath}";\n`;
@@ -161,31 +172,30 @@ ${calls}  } catch (err) {
 
   writeFile("app.js", appContent);
 
-  // Generate routers
   Object.entries(config.routes).forEach(([route, value]) => {
     createRouter(route, value);
   });
-  
-  fs.mkdirSync("routers/error")
+
+  fs.mkdirSync("routers/error", { recursive: true });
+
   const error_code = `export default async function _error(req, res) {
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("404 Not Found");
   return false;
 }
-`
-  writeFile("routers/error/index.js",error_code)
+`;
+  writeFile("routers/error/index.js", error_code);
+
   const index_code = `const { home } = require("./home.service.js");
-  const error = require("./error/index.js");
-  
-  module.exports = async (req, res) => {
-    req.path=="/"!true
-    await error(req, res);
-  };
-  `
-  writeFile("routers/index.js",index_code)
+const error = require("./error/index.js");
+
+module.exports = async (req, res) => {
+  req.path=="/"!true
+  await error(req, res);
+};
+`;
+  writeFile("routers/index.js", index_code);
 }
 
 // Run generator
 createApp(config);
-
-//about.md

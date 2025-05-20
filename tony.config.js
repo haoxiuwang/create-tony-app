@@ -1,6 +1,6 @@
 
 module.exports = {
-  "middlewares":[["./log","c:/a.js"],["./cookies"],["./serveStatic","public"]],
+  "middlewares":[["./log","c:/a.js"],["./cookies"],["./serve-static","public"]],
   "routes":{
     "/":[],
     "/api":[],//[[["jwt",{"secret":"abc"}]],["auth"]]
