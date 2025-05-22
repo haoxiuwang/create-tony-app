@@ -185,6 +185,13 @@ ${calls}  } catch (err) {
   Object.entries(config.routes).forEach(([route, value]) => {
     createRouter(route, value);
   });
+  fs.mkdirSync("routers/error", { recursive: true });
+    const error_code = `export default async function _error(req, res) {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("404 Not Found");
+    return false;
+  }`;
+    writeFile("routers/error/index.js", error_code);
 }
 
 // Run generator
