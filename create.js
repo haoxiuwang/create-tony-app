@@ -2,7 +2,6 @@ const fs = require("fs");
 const path = require("path");
 
 const config = require("./tony.config");
-const { log } = require("console");
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -11,8 +10,6 @@ function ensureDir(dirPath) {
 }
 
 function writeFile(filePath, content) {
-  if(filePath=='routers\\index.js')
-    content = content.replace(/\.startsWith\((\"\/\")\)/img,"==$1")
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, content);
 }
@@ -51,7 +48,7 @@ function createServiceFile(filePath, route) {
   const template = `async function ${funcName}(req, res) {
   // TODO: implement service logic for ${route}
 }
-export { ${funcName} };
+module.exports = { ${funcName} };
 `;
   writeFile(filePath, template);
 }
@@ -59,18 +56,16 @@ export { ${funcName} };
 function generateMiddlewareCode(middlewares, level) {
   let imports = "";
   let calls = "";
- 
+
   middlewares.forEach((mwArr, idx) => {
-    let [modPath, options] = mwArr;
-    
+    const [modPath, options] = mwArr;
     const name = getModuleName(modPath);
-    
     const safeName = toValidVarName(name);
     const varName = `__${safeName}${idx}`;
     const importPath = isLocal(modPath)
-      ? `${"../".repeat(level+1)}middlewares/${name}.js`
+      ? `${"../".repeat(level)}middlewares/${name}.js`
       : modPath;
-    imports += `import ${safeName} from "${importPath}";\n`;
+    imports += `const ${safeName} = require("${importPath}");\n`;
     imports += `const ${varName} = ${safeName}(${options ? JSON.stringify(options) : ""});\n`;
     calls += `  await ${varName}(req, res)!;\n`;
   });
@@ -79,7 +74,6 @@ function generateMiddlewareCode(middlewares, level) {
 }
 
 function createRouter(route, value) {
- 
   const segments = route.split("/").filter(Boolean);
   const routerDir = path.join("routers", ...segments);
   const routerFile = path.join(routerDir, "index.js");
@@ -90,48 +84,44 @@ function createRouter(route, value) {
   let services = [];
 
   if (Array.isArray(value)) {
-    
-    if (value.length>0) {
-      middlewares = value[0]; 
-    
-      if (value.length>1)     
+    if (value.length === 2) {
+      middlewares = value[0];
       services = value[1];
     }
   }
-  
+
   const defaultService = segments.length === 0 ? "home" : segments[segments.length - 1];
 
   const { imports: mwImports, calls: mwCalls } = generateMiddlewareCode(middlewares, level);
 
-  let serviceImports = `import { ${defaultService} } from "./${defaultService}.service.js";\n`;
+  let serviceImports = `const { ${defaultService} } = require("./${defaultService}.service.js");\n`;
   services.forEach(srv => {
-    serviceImports += `import { ${srv} } from "./${srv}.service.js";\n`;
+    serviceImports += `const { ${srv} } = require("./${srv}.service.js");\n`;
   });
 
   const children = Object.keys(config.routes).filter(k => {
     return k.startsWith(route + "/") && k.split("/").length === segments.length + 2;
   });
-  
+
   let childImports = "";
   let childCalls = "";
   children.forEach(child => {
     const name = path.basename(child);
     const alias = pascal(name);
     const importPath = `./${name}/index.js`;
-    childImports += `import ${alias} from "${importPath}";\n`;
+    childImports += `const ${alias} = require("${importPath}");\n`;
     childCalls += `  await ${alias}(req, res)!;\n`;
   });
 
-  const errorImport = `import error from "${"../".repeat(level)}${!level ? "./" : ""}error/index.js";\n`;
+  const errorImport = `const error = require("${"../".repeat(level)}${!level ? "./" : ""}error/index.js");\n`;
 
   const content = `${serviceImports}${mwImports}${childImports}${errorImport}
-export async function handler(req, res){
+module.exports = async (req, res) => {
   req.path.startsWith("${routePath}")!true
 ${mwCalls}${childCalls}  await error(req, res);
 };
 `;
-// if(routerFile==="routers\\index.js")
-// console.log({content})
+
   writeFile(routerFile, content);
 
   createServiceFile(path.join(routerDir, `${defaultService}.service.js`), routePath);
@@ -185,6 +175,26 @@ ${calls}  } catch (err) {
   Object.entries(config.routes).forEach(([route, value]) => {
     createRouter(route, value);
   });
+
+  fs.mkdirSync("routers/error", { recursive: true });
+
+  const error_code = `export default async function _error(req, res) {
+  res.writeHead(404, { "Content-Type": "text/plain" });
+  res.end("404 Not Found");
+  return false;
+}
+`;
+  writeFile("routers/error/index.js", error_code);
+
+  const index_code = `const { home } = require("./home.service.js");
+const error = require("./error/index.js");
+
+module.exports = async (req, res) => {
+  req.path=="/"!true
+  await error(req, res);
+};
+`;
+  writeFile("routers/index.js", index_code);
 }
 
 // Run generator
