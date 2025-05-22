@@ -125,7 +125,7 @@ function createRouter(route, value) {
   const errorImport = `import error from "${"../".repeat(level)}${!level ? "./" : ""}error/index.js";\n`;
 
   const content = `${serviceImports}${mwImports}${childImports}${errorImport}
-export async function handler(req, res){
+export default async function handler(req, res){
   req.path.startsWith("${routePath}")!true
 ${mwCalls}${childCalls}  await error(req, res);
 };
