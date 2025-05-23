@@ -13,6 +13,7 @@ function ensureDir(dirPath) {
 function writeFile(filePath, content) {
   if(filePath=='routers\\index.js')
     content = content.replace(/\.startsWith\((\"\/\")\)/img,"==$1")
+                      .replace(/await error.+/,"")
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, content);
 }
@@ -79,7 +80,8 @@ function generateMiddlewareCode(middlewares, level) {
 }
 
 function createRouter(route, value) {
- 
+  let mName = route=="/"?"main":route.replace(/^.*\/([^\/]+)$/,"$1")
+  console.log({mName})
   const segments = route.split("/").filter(Boolean);
   const routerDir = path.join("routers", ...segments);
   const routerFile = path.join(routerDir, "index.js");
@@ -125,7 +127,7 @@ function createRouter(route, value) {
   const errorImport = `import error from "${"../".repeat(level)}${!level ? "./" : ""}error/index.js";\n`;
 
   const content = `${serviceImports}${mwImports}${childImports}${errorImport}
-export default async function handler(req, res){
+export default async function ${mName}(req, res){
   req.path.startsWith("${routePath}")!true
 ${mwCalls}${childCalls}  await error(req, res);
 };
