@@ -1,40 +1,65 @@
+/** @type {import('./tony/types').TonyConfig} */
 export default {
-  // 全局中间件：跨域、请求日志
+  server: {
+    port: 3000,
+    apiPrefix: "/api/v1" // 逻辑前缀
+  },
+
+  // API 专用全局中间件
   middlewares: [
-    ["./cors", { origin: "*" }],
-    ["./logger", { format: "dev" }]
+    ["./tony/cors.js"],         // 跨域处理
+    ["./tony/bodyParser.js"],   // 解析 JSON Body
+    ["./tony/rateLimiter.js", { windowMs: 15 * 60 * 1000, max: 100 }] // 防刷限流
   ],
-  
+
   routes: {
-    // 首页：获取推荐书籍
-    "/": [[], ["getHomeRecommendation"]],
+    // --- 公共资源接口 ---
+    "/api/v1/books": {
+      services: ["list", "search"],
+      middlewares: [["./cache.js", { expire: "10m" }]]
+    },
 
-    // 书籍库：列表分片与详情
-    "/books": [[], ["listBooks", "search"]],
-    
-    // 书籍详情（带 ID）
-    "/books/detail": [[], ["getBookDetail", "getChapters"]],
+    // 资源详情：在 service 中通过 req.query.id 处理
+    "/api/v1/books/detail": {
+      services: ["getById", "getChapters", "getRecommendations"]
+    },
 
-    // 书籍订阅（带 ID）
-    "/books/subscribe": [[], [ "setSubcribe"]],
-    // 音频流处理：需要专门的性能处理中间件
-    "/stream": [
-      [ ["./rangeParser", null] ], // 解析 HTTP Range 请求，支持音频拖动
-      ["playAudio"]
-    ],
+    // --- 认证与令牌管理 ---
+    "/api/v1/auth": {
+      services: ["issueToken", "refreshToken", "revokeToken"]
+    },
 
-    // 用户中心：需要鉴权中间件
-    "/user": [
-      [ ["./auth", { mode: "jwt" }] ], // 该路由及其子路由全部受保护
-      ["getProfile", "updateSettings"]
-    ],
+    // --- 需鉴权的用户私有接口 ---
+    "/api/v1/me": {
+      middlewares: [["./jwtAuth.js"]], // JWT 校验
+      services: ["getProfile", "updateProfile"]
+    },
 
-    "/user/signup":[
-      [["./auth", { mode: "jwt" }]],
-      ["setUser"]
-    ],
+    // 播放记录（高频同步）
+    "/api/v1/me/progress": {
+      middlewares: [["./jwtAuth.js"]],
+      services: ["sync", "lastPlayed"]
+    },
 
-    // 用户书架
-    "/user/library": [[], ["getMyBooks", "addFavorite"]]
+    // 收藏夹
+    "/api/v1/me/library": {
+      middlewares: [["./jwtAuth.js"]],
+      services: ["addBook", "removeBook", "getCollection"]
+    },
+
+    // --- 媒体分发接口 (通常指向 CDN 或云存储签名地址) ---
+    "/api/v1/stream": {
+      middlewares: [
+        ["./jwtAuth.js"],
+        ["./checkSubscription.js"] // 检查是否已购买或会员
+      ],
+      services: ["getSignedUrl", "getQualityOptions"]
+    },
+
+    // --- 支付与账单 ---
+    "/api/v1/billing": {
+      middlewares: [["./jwtAuth.js"]],
+      services: ["createOrder", "getInvoices", "verifyWebHook"]
+    }
   }
 };

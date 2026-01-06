@@ -1,23 +1,34 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
-// 兼容 ESM 的路径获取
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * 核心工具集
+ */
 const utils = {
   ensureDir: (dirPath) => fs.mkdirSync(dirPath, { recursive: true }),
+  
   writeFile: (filePath, content) => {
     utils.ensureDir(path.dirname(filePath));
     fs.writeFileSync(filePath, content.trim() + "\n");
   },
+
   pascal: (str) => str.split(/[^a-zA-Z0-9]/).filter(Boolean)
     .map(w => w[0].toUpperCase() + w.slice(1)).join(""),
+
   toCamel: (str) => str.replace(/[^a-zA-Z0-9]/g, ' ').split(' ').filter(Boolean)
     .map((w, i) => i === 0 ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1))
     .join('') || 'module',
-  toPosixPath: (p) => p.split(path.sep).join(path.posix.sep),
+
+  // 关键：统一 ESM 导入路径，必须是 Posix 格式并带后缀
+  toImportPath: (p) => {
+    let posix = p.split(path.sep).join(path.posix.sep);
+    return posix.endsWith('.js') ? posix : `${posix}.js`;
+  },
+
   jsDoc: `/**
  * @param {import('http').IncomingMessage & { path: string, query: Object }} req
  * @param {import('http').ServerResponse & { json: Function, status: Function }} res
@@ -25,63 +36,65 @@ const utils = {
 };
 
 /**
- * 生成路由层级逻辑
+ * 递归生成路由
  */
-function createRouter(route, value, config) {
+function createRouter(route, routeConfig, fullConfig) {
   const segments = route.split("/").filter(Boolean);
   const routerDir = path.join("routers", ...segments);
   const level = segments.length;
   const isRoot = route === "/";
-  
-  const mName = isRoot ? "main" : segments[level - 1];
-  const defaultService = isRoot ? "home" : segments[level - 1];
 
-  // 解析配置: [middlewares, services]
-  const [middlewares = [], services = []] = Array.isArray(value) ? value : [[], []];
+  // 优雅的配置解构
+  const { 
+    middlewares = [], 
+    services = [] 
+  } = routeConfig;
+
+  const mName = isRoot ? "main" : segments[level - 1];
+  const defaultService = services[0] || (isRoot ? "home" : segments[level - 1]);
+  const allServices = Array.from(new Set([defaultService, ...services]));
 
   let imports = "";
   let calls = "";
 
-  // 1. 处理中间件
+  // 1. 生成中间件代码
   middlewares.forEach(([modPath, options], idx) => {
     const name = path.basename(modPath, ".js");
     const varPrefix = utils.toCamel(name);
     const varName = `${varPrefix}_${idx}`;
     
-    // 计算相对导入路径
     const relPath = modPath.startsWith(".") 
-      ? utils.toPosixPath(path.join("../".repeat(level + 1), "middlewares", `${name}.js`))
+      ? utils.toImportPath(path.join("../".repeat(level + 1), "middlewares", name))
       : modPath;
     
     imports += `import ${varPrefix}Fn from "${relPath}";\n`;
     imports += `const ${varName} = ${varPrefix}Fn(${options ? JSON.stringify(options) : ""});\n`;
-    calls += `  if (await ${varName}(req, res) === false) return; // Middleware Break\n`;
+    calls += `  if (await ${varName}(req, res) === false) return;\n`;
   });
 
-  // 2. 处理 Service 导入
-  const allServices = Array.from(new Set([defaultService, ...services]));
+  // 2. 生成 Service 导入
   allServices.forEach(srv => {
     imports += `import { ${srv} } from "./${srv}.service.js";\n`;
   });
 
-  // 3. 处理子路由分发 (递归匹配)
-  const children = Object.keys(config.routes).filter(k => {
+  // 3. 自动查找并生成子路由分发
+  const childrenPaths = Object.keys(fullConfig.routes).filter(k => {
     const kSegs = k.split("/").filter(Boolean);
-    return k.startsWith(route === "/" ? "/" : route + "/") && kSegs.length === level + 1;
+    const baseMatch = k.startsWith(isRoot ? "/" : route + "/");
+    return baseMatch && kSegs.length === level + 1;
   });
 
-  children.forEach(childPath => {
+  childrenPaths.forEach(childPath => {
     const childName = childPath.split("/").filter(Boolean).pop();
     const alias = utils.pascal(childName);
     imports += `import ${alias} from "./${childName}/index.js";\n`;
     calls += `  if (req.path.startsWith("${childPath}")) return await ${alias}(req, res);\n`;
   });
 
-  // 4. 导入兜底错误处理
-  const errorRelPath = utils.toPosixPath(path.join("../".repeat(level), "error/index.js"));
-  imports += `import error from "./${errorRelPath.replace(/^\.\/\.\./, "..")}";\n`;
+  const errorRelPath = utils.toImportPath(path.join("../".repeat(level), "error/index.js"));
+  imports += `import error from "${errorRelPath.startsWith('.') ? errorRelPath : './' + errorRelPath}";\n`;
 
-  // 5. 生成 index.js
+  // 4. 生成 Router index.js
   const content = `
 ${imports}
 
@@ -98,14 +111,13 @@ ${calls}
 
   utils.writeFile(path.join(routerDir, "index.js"), content);
 
-  // 6. 生成 *.service.js 模板
+  // 5. 生成 Service 模板
   allServices.forEach(srv => {
     const srvFile = path.join(routerDir, `${srv}.service.js`);
     if (!fs.existsSync(srvFile)) {
       utils.writeFile(srvFile, `
 ${utils.jsDoc}
 export async function ${srv}(req, res) {
-  // TODO: Implement logic for ${route}
   res.end("Response from ${srv} at ${route}");
 }`);
     }
@@ -113,15 +125,13 @@ export async function ${srv}(req, res) {
 }
 
 /**
- * 主程序入口
+ * 主构建函数
  */
 export function createApp(config) {
-  console.log("🛠️  Generating Tony Framework-less Server...");
-
-  // 1. 生成基础目录
+  const root = process.cwd();
   ["middlewares", "routers", "tony"].forEach(d => utils.ensureDir(d));
 
-  // 2. 生成 app.js 主入口
+  // 1. 生成 app.js
   let appImports = `import http from "http";\nimport { enhanceRequest, enhanceResponse } from "./tony/helpers.js";\nimport { handleError } from "./tony/error.js";\nimport main from "./routers/index.js";\n`;
   let appCalls = "";
 
@@ -134,9 +144,7 @@ export function createApp(config) {
     appCalls += `    if (await ${varName}(req, res) === false) return;\n`;
   });
 
-  const appContent = `
-${appImports}
-
+  const appContent = `${appImports}
 http.createServer(async (req, res) => {
   try {
     enhanceRequest(req);
@@ -146,25 +154,28 @@ ${appCalls}
   } catch (err) {
     handleError(err, res);
   }
-}).listen(3000, () => {
-  console.log("🚀 Tony server running at http://localhost:3000");
+}).listen(config.server?.port || 3000, () => {
+  console.log(\`🚀 Tony server running at http://localhost:\${config.server?.port || 3000}\`);
 });`;
 
   utils.writeFile("app.js", appContent);
 
-  // 3. 遍历路由配置生成目录树
-  Object.entries(config.routes).forEach(([route, value]) => {
-    createRouter(route, value, config);
+  // 2. 递归生成所有路由
+  Object.entries(config.routes).forEach(([route, routeConfig]) => {
+    createRouter(route, routeConfig, config);
   });
 
-  // 4. 生成辅助工具类
+  // 3. 生成固定辅助代码 (helpers, error, jsconfig)
+  generateHelpers();
+}
+
+function generateHelpers() {
   utils.writeFile("tony/helpers.js", `
 export function enhanceRequest(req) {
   const url = new URL(req.url, \`http://\${req.headers.host}\`);
   req.path = url.pathname;
   req.query = Object.fromEntries(url.searchParams);
 }
-
 export function enhanceResponse(res) {
   res.json = (data) => {
     res.setHeader("Content-Type", "application/json");
@@ -188,9 +199,23 @@ export default async function _error(req, res) {
   res.end("404 Not Found");
 }`);
 
-  // 5. 生成 JSConfig 提供 IDE 支持
   utils.writeFile("jsconfig.json", JSON.stringify({
     compilerOptions: { checkJs: true, target: "ESNext", module: "ESNext" },
     exclude: ["node_modules"]
   }, null, 2));
+}
+
+/**
+ * 启动器：修复 Windows 路径并加载配置
+ */
+export async function startGenerator() {
+  const configPath = path.resolve(process.cwd(), "tony.config.js");
+  const fileUrl = pathToFileURL(configPath).href;
+  
+  try {
+    const configModule = await import(`${fileUrl}?update=${Date.now()}`);
+    createApp(configModule.default);
+  } catch (err) {
+    console.error("❌ Generation failed:", err);
+  }
 }

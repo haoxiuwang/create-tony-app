@@ -1,0 +1,7 @@
+/**
+ * @param {import('http').IncomingMessage & { path: string, query: Object }} req
+ * @param {import('http').ServerResponse & { json: Function, status: Function }} res
+ */
+export async function sync(req, res) {
+  res.end("Response from sync at /api/v1/me/progress");
+}
