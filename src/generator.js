@@ -128,6 +128,8 @@ export async function ${srv}(req, res) {
  * 主构建函数
  */
 export function createApp(config) {
+ 
+  
   const root = process.cwd();
   ["middlewares", "routers", "tony"].forEach(d => utils.ensureDir(d));
 

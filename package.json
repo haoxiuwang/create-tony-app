@@ -1,9 +1,10 @@
 {
-  "name": "tony-cli",
-  "version": "1.0.0",
+  "name": "@whxcctv/create-tony-app",
+  "version": "1.0.3",
   "type": "module",
+  "main": "bin/index.js",
   "bin": {
-    "tony": "./bin/tony.js"
+    "create-tony-app": "bin/index.js"
   },
   "scripts": {
     "dev": "node bin/tony.js --watch"
